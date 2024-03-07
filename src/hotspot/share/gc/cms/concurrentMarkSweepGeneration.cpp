@@ -7169,6 +7169,12 @@ void SweepClosure::initialize_free_range(HeapWord* freeFinger,
 // started with the two consecutive 1 bits to indicate its potentially
 // uninitialized state.
 
+extern unsigned long debug_do_already_free_chunk;
+extern unsigned long debug_do_garbage_chunk;
+extern unsigned long debug_do_live_chunk;
+extern jlong debug_do_already_free_chunk_cycles;
+extern jlong debug_do_garbage_chunk_cycles;
+extern jlong debug_do_live_chunk_cycles;
 size_t SweepClosure::do_blk_careful(HeapWord* addr) {
   FreeChunk* fc = (FreeChunk*)addr;
   size_t res;
@@ -7206,7 +7212,10 @@ size_t SweepClosure::do_blk_careful(HeapWord* addr) {
   if (fc->is_free()) {
     // Chunk that is already free
     res = fc->size();
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     do_already_free_chunk(fc);
+    debug_do_already_free_chunk_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+    debug_do_already_free_chunk++;
     debug_only(_sp->verifyFreeLists());
     // If we flush the chunk at hand in lookahead_and_flush()
     // and it's coalesced with a preceding chunk, then the
@@ -7225,7 +7234,10 @@ size_t SweepClosure::do_blk_careful(HeapWord* addr) {
     NOT_PRODUCT(_last_fc = fc;)
   } else if (!_bitMap->isMarked(addr)) {
     // Chunk is fresh garbage
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     res = do_garbage_chunk(fc);
+    debug_do_garbage_chunk_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+    debug_do_garbage_chunk++;
     debug_only(_sp->verifyFreeLists());
     NOT_PRODUCT(
       _numObjectsFreed++;
@@ -7234,7 +7246,10 @@ size_t SweepClosure::do_blk_careful(HeapWord* addr) {
   } else {
     // Chunk that is alive.
 //    log_info(gc)("do live chunk: %p", fc);
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     res = do_live_chunk(fc);
+    debug_do_live_chunk_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+    debug_do_live_chunk++;
     debug_only(_sp->verifyFreeLists());
     NOT_PRODUCT(
         _numObjectsLive++;
@@ -7286,7 +7301,12 @@ size_t SweepClosure::do_blk_careful(HeapWord* addr) {
 // be chosen.  The "hint" associated with a free list, if non-null, points
 // to a free list which may be overpopulated.
 //
-
+extern unsigned long debug_do_post_free_or_garbage_chunk;
+extern unsigned long debug_lookahead_and_flush;
+extern unsigned long debug_flush_cur_free_chunk;
+extern jlong debug_do_post_free_or_garbage_chunk_cycles;
+extern jlong debug_lookahead_and_flush_cycles;
+extern jlong debug_flush_cur_free_chunk_cycles;
 void SweepClosure::do_already_free_chunk(FreeChunk* fc) {
   const size_t size = fc->size();
   // Chunks that cannot be coalesced are not in the
@@ -7308,11 +7328,19 @@ void SweepClosure::do_already_free_chunk(FreeChunk* fc) {
   if (!fc->cantCoalesce()) {
     // This chunk can potentially be coalesced.
     // All the work is done in
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     do_post_free_or_garbage_chunk(fc, size);
+    debug_do_post_free_or_garbage_chunk_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+    debug_do_post_free_or_garbage_chunk++;
     // Note that if the chunk is not coalescable (the else arm
     // below), we unconditionally flush, without needing to do
     // a "lookahead," as we do below.
-    if (inFreeRange()) lookahead_and_flush(fc, size);
+    if (inFreeRange()) {
+      dbg_st_cycle = os::rdtsc_amd64();
+      lookahead_and_flush(fc, size);
+      debug_lookahead_and_flush_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+      debug_lookahead_and_flush++;
+    }
   } else {
     // Code path common to both original and adaptive free lists.
 
@@ -7321,7 +7349,10 @@ void SweepClosure::do_already_free_chunk(FreeChunk* fc) {
     if (inFreeRange()) {
       // we kicked some butt; time to pick up the garbage
       assert(freeFinger() < addr, "freeFinger points too high");
+      jlong dbg_st_cycle = os::rdtsc_amd64();
       flush_cur_free_chunk(freeFinger(), pointer_delta(addr, freeFinger()));
+      debug_flush_cur_free_chunk_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+      debug_flush_cur_free_chunk++;
     }
     // else, nothing to do, just continue
   }
@@ -7395,6 +7426,19 @@ size_t SweepClosure::do_live_chunk(FreeChunk* fc) {
   return size;
 }
 
+extern unsigned long debug_do_coalesce;
+extern jlong debug_do_coalesce_cycles;
+extern unsigned long debug_not_do_coalesce;
+extern jlong debug_not_do_coalesce_cycles;
+extern unsigned long debug_free_range_in_freelists;
+extern jlong debug_free_range_in_freelists_cycles;
+extern unsigned long debug_fc_in_freelists;
+extern jlong debug_fc_in_freelists_cycles;
+// extern unsigned long debug_coal_death;
+extern jlong debug_coal_death_cycles;
+// extern unsigned long debug_remove_fcffl;
+extern jlong debug_remove_fcffl_cycles;
+extern bool from_fcffl;
 void SweepClosure::do_post_free_or_garbage_chunk(FreeChunk* fc,
                                                  size_t chunkSize) {
   // do_post_free_or_garbage_chunk() should only be called in the case
@@ -7447,10 +7491,12 @@ void SweepClosure::do_post_free_or_garbage_chunk(FreeChunk* fc,
   const bool doCoalesce = inFreeRange()
                           && (coalesce || _g->isNearLargestChunk(fc_addr));
   if (doCoalesce) {
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     // Coalesce the current free range on the left with the new
     // chunk on the right.  If either is on a free list,
     // it must be removed from the list and stashed in the closure.
     if (freeRangeInFreeLists()) {
+      jlong dbg_tmp_st_cycle = os::rdtsc_amd64();
       FreeChunk* const ffc = (FreeChunk*)freeFinger();
       assert(ffc->size() == pointer_delta(fc_addr, freeFinger()),
              "Size of free range is inconsistent with chunk size.");
@@ -7461,17 +7507,30 @@ void SweepClosure::do_post_free_or_garbage_chunk(FreeChunk* fc,
       _sp->coalDeath(ffc->size());
       _sp->removeFreeChunkFromFreeLists(ffc);
       set_freeRangeInFreeLists(false);
+      debug_free_range_in_freelists_cycles += (os::rdtsc_amd64() - dbg_tmp_st_cycle);
+      debug_free_range_in_freelists++;
     }
     if (fcInFreeLists) {
+      jlong dbg_tmp_st_cycle = os::rdtsc_amd64();
       _sp->coalDeath(chunkSize);
+      debug_coal_death_cycles += (os::rdtsc_amd64() - dbg_tmp_st_cycle);
+
       assert(fc->size() == chunkSize,
         "The chunk has the wrong size or is not in the free lists");
+      from_fcffl = true;
+      jlong dbg_tmp_1_st_cycle = os::rdtsc_amd64();
       _sp->removeFreeChunkFromFreeLists(fc);
+      debug_remove_fcffl_cycles += (os::rdtsc_amd64() - dbg_tmp_1_st_cycle);
+      debug_fc_in_freelists_cycles += (os::rdtsc_amd64() - dbg_tmp_st_cycle);
+      debug_fc_in_freelists++; 
     }
     set_lastFreeRangeCoalesced(true);
     print_free_block_coalesced(fc);
+    debug_do_coalesce_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+    debug_do_coalesce++;
   } else {  // not in a free range and/or should not coalesce
     // Return the current free range and start a new one.
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     if (inFreeRange()) {
       // In a free range but cannot coalesce with the right hand chunk.
       // Put the current free range into the free lists.
@@ -7481,6 +7540,8 @@ void SweepClosure::do_post_free_or_garbage_chunk(FreeChunk* fc,
     // Set up for new free range.  Pass along whether the right hand
     // chunk is in the free lists.
     initialize_free_range((HeapWord*)fc, fcInFreeLists);
+    debug_not_do_coalesce_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+    debug_not_do_coalesce++;
   }
 }
 

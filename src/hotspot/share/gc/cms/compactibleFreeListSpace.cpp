@@ -962,11 +962,151 @@ CompactibleFreeListSpace::new_dcto_cl(OopIterateClosure* cl,
 // so on.
 
 // Apply the given closure to each block in the space.
+unsigned long debug_bic_count = 0; // yyz: 循环次数
+unsigned long debug_do_already_free_chunk = 0;
+unsigned long debug_do_garbage_chunk = 0;
+unsigned long debug_do_live_chunk = 0;
+jlong debug_do_already_free_chunk_cycles = 0;
+jlong debug_do_garbage_chunk_cycles = 0;
+jlong debug_do_live_chunk_cycles = 0;
+// do_already_free_chunk
+unsigned long debug_do_post_free_or_garbage_chunk = 0;
+unsigned long debug_lookahead_and_flush = 0;
+unsigned long debug_flush_cur_free_chunk = 0;
+jlong debug_do_post_free_or_garbage_chunk_cycles = 0;
+jlong debug_lookahead_and_flush_cycles = 0;
+jlong debug_flush_cur_free_chunk_cycles = 0;
+// do_post_free_or_garbage
+unsigned long debug_do_coalesce = 0;
+jlong debug_do_coalesce_cycles = 0;
+unsigned long debug_not_do_coalesce = 0;
+jlong debug_not_do_coalesce_cycles = 0;
+unsigned long debug_free_range_in_freelists = 0;
+jlong debug_free_range_in_freelists_cycles = 0;
+unsigned long debug_fc_in_freelists = 0;
+jlong debug_fc_in_freelists_cycles = 0;
+// fcInFreeLists
+jlong debug_coal_death_cycles = 0;
+jlong debug_remove_fcffl_cycles = 0;
+// removeFreeChunkFromFreeLists
+unsigned long debug_remove_cfif = 0;
+jlong debug_remove_cfif_cycles = 0;
+unsigned long debug_remove_cfd = 0;
+jlong debug_remove_cfd_cycles = 0;
+bool from_fcffl = false;
+// removeChunkFromDictionary
+jlong debug_assert_locked_cycles = 0;
+jlong debug_bt_verify_single_block_cycles = 0;
+jlong debug_dic_remove_chunk_cycles = 0;
+jlong debug_bt_allocated_cycles = 0;
+// removeChunk
+jlong debug_rcrin_cycles = 0;
+jlong debug_repair_cycles = 0;
+unsigned long debug_rcrin = 0;
+unsigned long debug_repair = 0;
+bool from_rc = false;
+// remove_chunk_replace_if_needed
+jlong debug_remove_crif_cycles = 0;
+jlong debug_remove_crif_B_cycles = 0;
+jlong debug_remove_crif_C_cycles = 0;
+unsigned long debug_remove_crif_B = 0;
 void CompactibleFreeListSpace::blk_iterate_careful(BlkClosureCareful* cl) {
+  log_info(gc)("[CompactibleFreeListSpace::blk_iterate_careful] Step into");
   assert_lock_strong(freelistLock());
   HeapWord *cur, *limit;
-  for (cur = bottom(), limit = end(); cur < limit;
-       cur += cl->do_blk_careful(cur));
+  CMSHeap* heap = CMSHeap::heap();
+  unsigned int debug_full_gc_count = heap->total_full_collections();
+  log_info(gc)("full_gc_count: %u, bottom: %p, end: %p", debug_full_gc_count, bottom(), end());
+  debug_bic_count = 0;
+  
+  jlong start_cycle = os::rdtsc_amd64();
+  for (cur = bottom(), limit = end(); cur < limit;){
+    // if(debug_full_gc_count == 2 && debug_bic_count % 1000000 == 0) {
+      if(debug_bic_count % 50000 == 0) {
+        log_info(gc) ("[%lu][do_blk_careful] cur = %p do_already_free_chunk(%.3fms): %lu do_garbage_chunk(%.3fms): %lu do_live_chunk(%.3fms): %lu do_post_free_or_garbage_chunk(%.3fms): %lu lookahead_and_flush(%.3fms): %lu flush_cur_free_chunk(%.3fms): %lu do_coalesce(%.3fms): %lu not_do_coalesce(%.3fms): %lu free_range_in_freelists(%.3fms): %lu fc_in_freelists(%.3fms): %lu coal_death(%.3fms) remove_fcffl(%.3fms) {remove_cfif(%.3fms): %lu remove_cfd(%.3fms): %lu {assert_locked(%.3fms) verify_single_block(%.3fms) remove_chunk(%.3fms, avg:%.3fms) allocated(%.3fms) }} remove_chunk_replace_if_needed(%.3fms): %lu {secA(%.3fms) secB(%.3fms): %lu secC(%.3fms)} repair(%.3fms): %lu\n_dictionary{total_size: %zu, tree_height: %zu, total_nodes_in_tree: %zu}", 
+        debug_bic_count, cur, 
+        (double)debug_do_already_free_chunk_cycles /  2400000, debug_do_already_free_chunk, 
+        (double)debug_do_garbage_chunk_cycles / 2400000, debug_do_garbage_chunk, 
+        (double)debug_do_live_chunk_cycles / 2400000, debug_do_live_chunk, 
+        (double)debug_do_post_free_or_garbage_chunk_cycles / 2400000, debug_do_post_free_or_garbage_chunk, 
+        (double)debug_lookahead_and_flush_cycles / 2400000, debug_lookahead_and_flush, 
+        (double)debug_flush_cur_free_chunk_cycles / 2400000, debug_flush_cur_free_chunk,
+        (double)debug_do_coalesce_cycles / 2400000, debug_do_coalesce,
+        (double)debug_not_do_coalesce_cycles / 2400000, debug_not_do_coalesce,
+        (double)debug_free_range_in_freelists_cycles / 2400000, debug_free_range_in_freelists,
+        (double)debug_fc_in_freelists_cycles / 2400000, debug_fc_in_freelists,
+        (double)debug_coal_death_cycles / 2400000,
+        (double)debug_remove_fcffl_cycles / 2400000,
+        (double)debug_remove_cfif_cycles / 2400000, debug_remove_cfif,
+        (double)debug_remove_cfd_cycles / 2400000, debug_remove_cfd,
+        (double)debug_assert_locked_cycles / 2400000,
+        (double)debug_bt_verify_single_block_cycles / 2400000,
+        (double)debug_dic_remove_chunk_cycles / 2400000, (double)debug_dic_remove_chunk_cycles / debug_remove_cfd / 2400000,
+        (double)debug_bt_allocated_cycles / 2400000,
+        (double)debug_rcrin_cycles / 2400000, debug_rcrin,
+        (double)debug_remove_crif_cycles / 2400000,
+        (double)debug_remove_crif_B_cycles / 2400000, debug_remove_crif_B,
+        (double)debug_remove_crif_C_cycles / 2400000,
+        (double)debug_repair_cycles / 2400000, debug_repair,
+        _dictionary->total_size(),
+        _dictionary->tree_height(),
+        _dictionary->total_nodes_in_tree(_dictionary->root())
+        );
+
+        debug_do_already_free_chunk = 0;
+        debug_do_garbage_chunk = 0;
+        debug_do_live_chunk = 0;
+
+        debug_do_already_free_chunk_cycles = 0;
+        debug_do_garbage_chunk_cycles = 0;
+        debug_do_live_chunk_cycles = 0;
+        // do_already_free_chunk -> (do_post_free_or_garbage, lookahead_and_flush, flush_cur_free_chunk)
+        debug_do_post_free_or_garbage_chunk = 0;
+        debug_lookahead_and_flush = 0;
+        debug_flush_cur_free_chunk = 0;
+
+        debug_do_post_free_or_garbage_chunk_cycles = 0;
+        debug_lookahead_and_flush_cycles = 0;
+        debug_flush_cur_free_chunk_cycles = 0;
+        // do_post_free_or_garbage -> {do_coalesce(free_range_in_freelists, fc_in_freelists), not_do_coalesce}
+        debug_do_coalesce = 0;
+        debug_do_coalesce_cycles = 0;
+        debug_not_do_coalesce = 0;
+        debug_not_do_coalesce_cycles = 0;
+        debug_free_range_in_freelists = 0;
+        debug_free_range_in_freelists_cycles = 0;
+        debug_fc_in_freelists = 0;
+        debug_fc_in_freelists_cycles = 0;
+        // fc_in_freelists{coalDeath, removeFreeChunkFromFreeLists}
+        debug_coal_death_cycles = 0;
+        debug_remove_fcffl_cycles = 0;
+        // removeFreeChunkFromFreeLists{removeChunkFromIndexedFreeList, removeChunkFromDictionary}
+        debug_remove_cfif = 0;
+        debug_remove_cfif_cycles = 0;
+        debug_remove_cfd = 0;
+        debug_remove_cfd_cycles = 0;
+        // removeChunkFromDictionary
+        debug_assert_locked_cycles = 0;
+        debug_bt_verify_single_block_cycles = 0;
+        debug_dic_remove_chunk_cycles = 0;
+        debug_bt_allocated_cycles = 0;
+
+        // remove_chunk_from_tree
+        debug_rcrin_cycles = 0;
+        debug_repair_cycles = 0;
+        debug_rcrin = 0;
+        debug_repair = 0;
+
+        // remove_chunk_replace_if_needed
+        debug_remove_crif_cycles = 0;
+        debug_remove_crif_B_cycles = 0;
+        debug_remove_crif_C_cycles = 0;
+        debug_remove_crif_B = 0;
+    }
+    debug_bic_count++;
+    cur += cl->do_blk_careful(cur);
+  }
+  log_info(gc)("[%lu][CompactibleFreeListSpace::blk_iterate_careful](%.3fms) Step out", debug_bic_count, (double)(os::rdtsc_amd64() - start_cycle) / 2400000);
 }
 
 // Apply the given closure to each block in the space.
@@ -1986,23 +2126,53 @@ CompactibleFreeListSpace::removeFreeChunkFromFreeLists(FreeChunk* fc) {
   assert_locked();
   debug_only(verifyFreeLists());
   if (size < SmallForDictionary) {
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     removeChunkFromIndexedFreeList(fc);
+    if(from_fcffl) {
+      debug_remove_cfif_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+      debug_remove_cfif++;
+    }
   } else {
+    jlong dbg_st_cycle = os::rdtsc_amd64();
     removeChunkFromDictionary(fc);
+    if(from_fcffl) {
+      debug_remove_cfd_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+      debug_remove_cfd++;
+    }
   }
+  from_fcffl = false;
   _bt.verify_single_block((HeapWord*)fc, size);
   debug_only(verifyFreeLists());
 }
 
+// extern bool from_rc;
 void
 CompactibleFreeListSpace::removeChunkFromDictionary(FreeChunk* fc) {
   size_t size = fc->size();
+  jlong dbg_st_cycle_1 = os::rdtsc_amd64();
   assert_locked();
+  if(from_fcffl) {
+    debug_assert_locked_cycles += (os::rdtsc_amd64() - dbg_st_cycle_1);
+  }
   assert(fc != NULL, "null chunk");
+  jlong dbg_st_cycle_2 = os::rdtsc_amd64();
   _bt.verify_single_block((HeapWord*)fc, size);
+  if(from_fcffl){
+    debug_bt_verify_single_block_cycles += (os::rdtsc_amd64() - dbg_st_cycle_2);
+  }
+  jlong dbg_st_cycle_3 = os::rdtsc_amd64();
+  from_rc = true;
   _dictionary->remove_chunk(fc);
+
+  if(from_fcffl){
+    debug_dic_remove_chunk_cycles += (os::rdtsc_amd64() - dbg_st_cycle_3);
+  }
   // adjust _unallocated_block upward, as necessary
+  jlong dbg_st_cycle_4 = os::rdtsc_amd64();
   _bt.allocated((HeapWord*)fc, size);
+  if(from_fcffl){
+    debug_bt_allocated_cycles += (os::rdtsc_amd64() - dbg_st_cycle_4);
+  }
 }
 
 void

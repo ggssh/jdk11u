@@ -45,6 +45,8 @@ template <class Chunk_t, class FreeList_t> class AscendTreeCensusClosure;
 template <class Chunk_t, class FreeList_t> class DescendTreeCensusClosure;
 template <class Chunk_t, class FreeList_t> class DescendTreeSearchClosure;
 
+extern bool from_rc;
+
 template <class Chunk_t, class FreeList_t>
 class TreeList : public FreeList_t {
   friend class TreeChunk<Chunk_t, FreeList_t>;
@@ -187,7 +189,7 @@ class BinaryTreeDictionary: public CHeapObj<mtGC> {
   void inc_total_size(size_t v);
   void dec_total_size(size_t v);
   void set_total_free_blocks(size_t v) { _total_free_blocks = v; }
-  TreeList<Chunk_t, FreeList_t>* root() const { return _root; }
+  
   void set_root(TreeList<Chunk_t, FreeList_t>* v) { _root = v; }
 
   // This field is added and can be set to point to the
@@ -218,6 +220,9 @@ class BinaryTreeDictionary: public CHeapObj<mtGC> {
   void       verify_tree() const;
   // verify that the given chunk is in the tree.
   bool       verify_chunk_in_free_list(Chunk_t* tc) const;
+  TreeList<Chunk_t, FreeList_t>* root() const { return _root; }
+  size_t     tree_height() const;
+  size_t     total_nodes_in_tree(TreeList<Chunk_t, FreeList_t>* tl) const;
  private:
   void          verify_tree_helper(TreeList<Chunk_t, FreeList_t>* tl) const;
   static size_t verify_prev_free_ptrs(TreeList<Chunk_t, FreeList_t>* tl);
@@ -234,9 +239,9 @@ class BinaryTreeDictionary: public CHeapObj<mtGC> {
   // at "tl".
   size_t     total_free_blocks_in_tree(TreeList<Chunk_t, FreeList_t>* tl) const;
   size_t     num_free_blocks()  const;
-  size_t     tree_height() const;
+  
   size_t     tree_height_helper(TreeList<Chunk_t, FreeList_t>* tl) const;
-  size_t     total_nodes_in_tree(TreeList<Chunk_t, FreeList_t>* tl) const;
+  
   size_t     total_nodes_helper(TreeList<Chunk_t, FreeList_t>* tl) const;
 
  public:
@@ -275,6 +280,7 @@ class BinaryTreeDictionary: public CHeapObj<mtGC> {
   void remove_chunk(Chunk_t* chunk) {
     verify_par_locked();
     remove_chunk_from_tree((TreeChunk<Chunk_t, FreeList_t>*)chunk);
+    from_rc = false;
     assert(chunk->is_free(), "Should still be a free chunk");
   }
 

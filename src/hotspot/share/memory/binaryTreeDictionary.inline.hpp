@@ -107,6 +107,10 @@ TreeList<Chunk_t, FreeList_t>::get_better_list(
   return this;
 }
 
+extern jlong debug_remove_crif_cycles;
+extern jlong debug_remove_crif_B_cycles;
+extern jlong debug_remove_crif_C_cycles;
+extern unsigned long debug_remove_crif_B;
 template <class Chunk_t, class FreeList_t>
 TreeList<Chunk_t, FreeList_t>* TreeList<Chunk_t, FreeList_t>::remove_chunk_replace_if_needed(TreeChunk<Chunk_t, FreeList_t>* tc) {
 
@@ -125,7 +129,10 @@ TreeList<Chunk_t, FreeList_t>* TreeList<Chunk_t, FreeList_t>::remove_chunk_repla
   assert(list != NULL, "should have at least the target chunk");
 
   // Is this the first item on the list?
+  jlong dbg_st_cycle = os::rdtsc_amd64();
+  //section A
   if (tc == list) {
+    //section B
     // The "getChunk..." functions for a TreeList<Chunk_t, FreeList_t> will not return the
     // first chunk in the list unless it is the last chunk in the list
     // because the first chunk is also acting as the tree node.
@@ -141,6 +148,7 @@ TreeList<Chunk_t, FreeList_t>* TreeList<Chunk_t, FreeList_t>::remove_chunk_repla
       assert(prevFC == NULL, "Not last chunk in the list");
       set_tail(NULL);
       set_head(NULL);
+      // debug_remove_crif_B_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
     } else {
       // copy embedded list.
       nextTC->set_embedded_list(tc->embedded_list());
@@ -153,6 +161,8 @@ TreeList<Chunk_t, FreeList_t>* TreeList<Chunk_t, FreeList_t>::remove_chunk_repla
           curTC = TreeChunk<Chunk_t, FreeList_t>::as_TreeChunk(curTC->next())) {
         curTC->set_list(retTL);
       }
+      debug_remove_crif_B_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
+      debug_remove_crif_B++;
       // Fix the parent to point to the new TreeList<Chunk_t, FreeList_t>.
       if (retTL->parent() != NULL) {
         if (this == retTL->parent()->left()) {
@@ -175,14 +185,18 @@ TreeList<Chunk_t, FreeList_t>* TreeList<Chunk_t, FreeList_t>::remove_chunk_repla
       retTL->link_head(nextTC);
       assert(nextTC->is_free(), "Should be a free chunk");
     }
+    // debug_remove_crif_B_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
   } else {
+    //section C
     if (nextTC == NULL) {
       // Removing chunk at tail of list
       this->link_tail(prevFC);
     }
     // Chunk is interior to the list
     prevFC->link_after(nextTC);
+    debug_remove_crif_C_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
   }
+  debug_remove_crif_cycles += (os::rdtsc_amd64() - dbg_st_cycle);
 
   // Below this point the embedded TreeList<Chunk_t, FreeList_t> being used for the
   // tree node may have changed. Don't use "this"
@@ -474,6 +488,11 @@ Chunk_t* BinaryTreeDictionary<Chunk_t, FreeList_t>::find_largest_dict() const {
 // chunk in a list on a tree node, just unlink it.
 // If it is the last chunk in the list (the next link is NULL),
 // remove the node and repair the tree.
+extern jlong debug_rcrin_cycles;
+extern jlong debug_repair_cycles;
+extern unsigned long debug_rcrin;
+extern unsigned long debug_repair;
+extern bool from_rc;
 template <class Chunk_t, class FreeList_t>
 TreeChunk<Chunk_t, FreeList_t>*
 BinaryTreeDictionary<Chunk_t, FreeList_t>::remove_chunk_from_tree(TreeChunk<Chunk_t, FreeList_t>* tc) {
@@ -503,7 +522,13 @@ BinaryTreeDictionary<Chunk_t, FreeList_t>::remove_chunk_from_tree(TreeChunk<Chun
   retTC = tc;
   // Removing this chunk can have the side effect of changing the node
   // (TreeList<Chunk_t, FreeList_t>*) in the tree.  If the node is the root, update it.
+  jlong dbg_st_cycle_1 = os::rdtsc_amd64();
   TreeList<Chunk_t, FreeList_t>* replacementTL = tl->remove_chunk_replace_if_needed(tc);
+  if(from_rc) {
+    debug_rcrin_cycles += (os::rdtsc_amd64() - dbg_st_cycle_1);
+    debug_rcrin++;
+  }
+
   assert(tc->is_free(), "Chunk should still be free");
   assert(replacementTL->parent() == NULL ||
          replacementTL == replacementTL->parent()->left() ||
@@ -528,6 +553,7 @@ BinaryTreeDictionary<Chunk_t, FreeList_t>::remove_chunk_from_tree(TreeChunk<Chun
 
   // Does the tree need to be repaired?
   if (replacementTL->count() == 0) {
+    jlong dbg_st_cycle_2 = os::rdtsc_amd64();
     assert(replacementTL->head() == NULL &&
            replacementTL->tail() == NULL, "list count is incorrect");
     // Find the replacement node for the (soon to be empty) node being removed.
@@ -595,6 +621,10 @@ BinaryTreeDictionary<Chunk_t, FreeList_t>::remove_chunk_from_tree(TreeChunk<Chun
            replacementTL->left() == NULL &&
            replacementTL->parent() == NULL,
         "delete without encumbrances");
+    if(from_rc) {
+      debug_repair_cycles += (os::rdtsc_amd64() - dbg_st_cycle_2);
+      debug_repair++;
+    }
   }
 
   assert(total_size() >= retTC->size(), "Incorrect total size");
